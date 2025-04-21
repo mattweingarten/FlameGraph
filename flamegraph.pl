@@ -104,9 +104,9 @@ my $frameheight = 16;           # max height is dynamic
 my $fontsize = 12;              # base text size
 my $fontwidth = 0.59;           # avg width relative to fontsize
 my $minwidth = 0.1;             # min function width, pixels or percentage of time
-my $nametype = "Function:";     # what are the names in the data?
-my $countname = "samples";      # what are the counts in the data?
-my $colors = "hot";             # color theme
+my $nametype = "Type:";     # what are the names in the data?
+my $countname = "accesses";      # what are the counts in the data?
+my $colors = "heat";             # color theme
 my $bgcolors = "";              # background color theme
 my $nameattrfile;               # file holding function attributes
 my $timemax;                    # (override the) sum of the counts
@@ -117,12 +117,12 @@ my $palette = 0;                # if we use consistent palettes (default off)
 my %palette_map;                # palette map hash
 my $pal_file = "palette.map";   # palette map file name
 my $stackreverse = 0;           # reverse stack order, switching merge end
-my $inverted = 0;               # icicle graph
+my $inverted = 1;               # icicle graph
 my $flamechart = 0;             # produce a flame chart (sort by time, do not merge stacks)
 my $negate = 0;                 # switch differential hues
 my $titletext = "";             # centered heading
-my $titledefault = "Flame Graph";	# overwritten by --title
-my $titleinverted = "Icicle Graph";	#   "    "
+my $titledefault = "Field hotness";	# overwritten by --title
+my $titleinverted = "Field hotness";	#   "    "
 my $searchcolor = "rgb(230,0,230)";	# color for search highlighting
 my $notestext = "";		# embedded notes in SVG
 my $subtitletext = "";		# second level title (optional)
@@ -271,6 +271,9 @@ if ($bgcolors eq "yellow") {
 	die "Unrecognized bgcolor option \"$bgcolors\""
 }
 
+
+
+
 # SVG functions
 { package SVG;
 	sub new {
@@ -357,6 +360,22 @@ SVG
 	1;
 }
 
+sub truncate_name {
+    my $name = shift;
+
+    # Regular expression to match and capture the suffix _[...].
+    # The (...) creates a capturing group.
+    if ($name =~ s/_[\[][^\]]+[]]$//) { 
+        # The s/// operator performs a substitution.
+        # It replaces the matched suffix with an empty string.
+        # The /g modifier is NOT used.  We only want to remove the suffix at the end.
+        return $name; # Return the modified name
+    } else {
+        return $name; # Return the original name if no suffix was found
+    }
+}
+
+
 sub namehash {
 	# Generate a vector hash for the name string, weighting early over
 	# later characters. We want to pick the same colors for function
@@ -382,6 +401,27 @@ sub sum_namehash {
   my $name = shift;
   return unpack("%32W*", $name);
 }
+
+sub format_with_breaks {
+    my $input_string = shift;
+    my $output_string = "";
+    my $indentation = "";
+
+    foreach my $char (split //, $input_string) {
+        if ($char eq "<") {
+            $output_string .= "$char\n$indentation  "; # Add newline and indentation
+            $indentation .= "  "; # Increase indentation for the next line
+        } elsif ($char eq ">") {
+            $indentation =~ s/  $//; # Reduce indentation
+            $output_string .= "\n$indentation$char"; # Newline before closing bracket
+        } else {
+            $output_string .= $char;
+        }
+    }
+
+    return $output_string;
+}
+
 
 sub random_namehash {
 	# Generate a random hash for the name string.
@@ -432,7 +472,35 @@ sub color {
 		return "rgb($r,$g,$b)";
 	}
 
-	# multi palettes
+    # multi palettes
+    if(defined $type and $type eq "heat"){
+        if ($name =~ m:_\[h1\]$:) { # cold
+            $type = "h1";
+        } elsif ($name =~ m:_\[h2\]$:) {
+            $type = "h2";
+        } elsif ($name =~ m:_\[h3\]$:) {
+            $type = "h3";
+        } elsif ($name =~ m:_\[h4\]$:) {
+            $type = "h4";
+        } elsif ($name =~ m:_\[h5\]$:) {
+            $type = "h5";
+        } elsif ($name =~ m:_\[h6\]$:) {
+            $type = "h6";
+        } elsif ($name =~ m:_\[h7\]$:) {
+            $type = "h7";
+        } elsif ($name =~ m:_\[h8\]$:) {
+            $type = "h8";
+        } elsif ($name =~ m:_\[h9\]$:) {
+            $type = "h9";
+        } elsif ($name =~ m:_\[h10\]$:) { # hot
+            $type = "h10";
+        } elsif ($name =~ m:_\[h11\]$:) { # hot
+            $type = "rgb(6,64,43)";
+        } else { # Default to h10 if no specific level is found.  Or handle the error as you see fit.
+            $type = "light-grey";  # Or perhaps: $type = "h1"; or even undef $type; to indicate an error.
+        }
+	}
+	
 	if (defined $type and $type eq "java") {
 		# Handle both annotations (_[j], _[i], ...; which are
 		# accurate), as well as input that lacks any annotations, as
@@ -440,7 +508,7 @@ sub color {
 		# and match on java|org|com, etc.
 		if ($name =~ m:_\[j\]$:) {	# jit annotation
 			$type = "green";
-		} elsif ($name =~ m:_\[i\]$:) {	# inline annotation
+		}elsif ($name =~ m:_\[i\]$:) {	# inline annotation
 			$type = "aqua";
 		} elsif ($name =~ m:^L?(java|javax|jdk|net|org|com|io|sun)/:) {	# Java
 			$type = "green";
@@ -545,6 +613,43 @@ sub color {
 		my $g = 90 + int(65 * $v1);
 		return "rgb($r,$g,0)";
 	}
+	if (defined $type and $type eq "light-grey") {
+		return "rgb(177, 180, 186)";
+	}
+
+	    # Heatmap colors (h10 to h1) - More distinct colors
+    if (defined $type and $type =~ /^h(\d+)$/) {
+        my $heat_level = $1;
+        if ($heat_level >= 1 and $heat_level <= 10) {
+            my $r = 0;
+            my $g = 0;
+            my $b = 0;
+
+			if ($heat_level == 10) { # Darkest Red
+				$r = 150; $g = 0; $b = 0;
+			} elsif ($heat_level == 9) {
+				$r = 200; $g = 0; $b = 0;
+			} elsif ($heat_level == 8) {
+				$r = 255; $g = 0; $b = 0;
+			} elsif ($heat_level == 7) {
+				$r = 255; $g = 50; $b = 0;
+			} elsif ($heat_level == 6) {
+				$r = 255; $g = 100; $b = 0;
+			} elsif ($heat_level == 5) { # Orange
+				$r = 255; $g = 150; $b = 0;
+			} elsif ($heat_level == 4) { # Yellow-Orange
+				$r = 255; $g = 200; $b = 0;
+			} elsif ($heat_level == 3) { # Yellow
+				$r = 255; $g = 255; $b = 0;
+			} elsif ($heat_level == 2) { # Light Blue
+				$r = 100; $g = 200; $b = 255; 
+			} elsif ($heat_level == 1) { # Lighter Blue
+				$r = 150; $g = 225; $b = 255;
+			}
+
+            return "rgb($r,$g,$b)";
+        }
+    }
 
 	return "rgb(0,0,0)";
 }
@@ -595,41 +700,91 @@ my %Node;	# Hash of merged frame data
 my %Tmp;
 
 # flow() merges two stacks, storing the merged frames and value data in %Node.
+# sub flow {
+# 	my ($last, $this, $v, $d) = @_;
+
+# 	my $len_a = @$last - 1;
+# 	my $len_b = @$this - 1;
+
+# 	my $i = 0;
+# 	my $len_same;
+# 	for (; $i <= $len_a; $i++) {
+# 		last if $i > $len_b;
+# 		last if $last->[$i] ne $this->[$i];
+# 	}
+# 	$len_same = $i;
+
+# 	for ($i = $len_a; $i >= $len_same; $i--) {
+# 		my $k = "$last->[$i];$i";
+# 		# a unique ID is constructed from "func;depth;etime";
+# 		# func-depth isn't unique, it may be repeated later.
+# 		print STDERR "$k\n";
+# 		$Node{"$k;$v"}->{stime} = delete $Tmp{$k}->{stime};
+# 		if (defined $Tmp{$k}->{delta}) {
+# 			$Node{"$k;$v"}->{delta} = delete $Tmp{$k}->{delta};
+# 		}
+# 		delete $Tmp{$k};
+# 	}
+
+# 	for ($i = $len_same; $i <= $len_b; $i++) {
+# 		my $k = "$this->[$i];$i";
+# 		$Tmp{$k}->{stime} = $v;
+# 		if (defined $d) {
+# 			$Tmp{$k}->{delta} += $i == $len_b ? $d : 0;
+# 		}
+# 	}
+
+#         return $this;
+# }
+
 sub flow {
-	my ($last, $this, $v, $d) = @_;
+    my ($last, $this, $v, $d) = @_;
 
-	my $len_a = @$last - 1;
-	my $len_b = @$this - 1;
+    my $len_a = @$last - 1;
+    my $len_b = @$this - 1;
 
-	my $i = 0;
-	my $len_same;
-	for (; $i <= $len_a; $i++) {
-		last if $i > $len_b;
-		last if $last->[$i] ne $this->[$i];
-	}
-	$len_same = $i;
+    my $i = 0;
+    my $len_same;
+    for (; $i <= $len_a; $i++) {
+        last if $i > $len_b;
+        last if $last->[$i] ne $this->[$i];
+    }
+    $len_same = $i;
 
-	for ($i = $len_a; $i >= $len_same; $i--) {
-		my $k = "$last->[$i];$i";
-		# a unique ID is constructed from "func;depth;etime";
-		# func-depth isn't unique, it may be repeated later.
-		$Node{"$k;$v"}->{stime} = delete $Tmp{$k}->{stime};
-		if (defined $Tmp{$k}->{delta}) {
-			$Node{"$k;$v"}->{delta} = delete $Tmp{$k}->{delta};
-		}
-		delete $Tmp{$k};
-	}
+    my @frames_to_add; # Array to store frames in the correct order
 
-	for ($i = $len_same; $i <= $len_b; $i++) {
-		my $k = "$this->[$i];$i";
-		$Tmp{$k}->{stime} = $v;
-		if (defined $d) {
-			$Tmp{$k}->{delta} += $i == $len_b ? $d : 0;
-		}
-	}
+    # Process frames that are no longer in the current stack
+    for ($i = $len_a; $i >= $len_same; $i--) {
+        my $k = "$last->[$i];$i";
+        # a unique ID is constructed from "func;depth;etime";
+        # func-depth isn't unique, it may be repeated later.
+        # print STDERR "$k\n";
+        push @frames_to_add, { key => "$k;$v", stime => delete $Tmp{$k}->{stime}, delta => delete $Tmp{$k}->{delta} };
+        delete $Tmp{$k};
+    }
 
-        return $this;
+    # Add the frames to Node in reversed order
+    for (my $j = 0; $j < @frames_to_add; $j++) { # Corrected loop direction
+        my $frame = $frames_to_add[$j];
+        $Node{$frame->{key}}->{stime} = $frame->{stime};
+        if (defined $frame->{delta}) {
+            $Node{$frame->{key}}->{delta} = $frame->{delta};
+        }
+    }
+
+    # Add new frames to Tmp
+    for ($i = $len_same; $i <= $len_b; $i++) {
+        my $k = "$this->[$i];$i";
+        $Tmp{$k}->{stime} = $v;
+        if (defined $d) {
+            $Tmp{$k}->{delta} += $i == $len_b ? $d : 0;
+        }
+    }
+
+    return $this;
 }
+
+
 
 # parse input
 my @Data;
@@ -637,8 +792,8 @@ my @SortedData;
 my $last = [];
 my $time = 0;
 my $delta = undef;
-my $ignored = 0;
 my $line;
+my $ignored = 0;
 my $maxdelta = 1;
 
 # reverse if needed
@@ -660,14 +815,20 @@ foreach (<>) {
 	} else {
 		unshift @Data, $line;
 	}
-}
+}	
+
 
 if ($flamechart) {
 	# In flame chart mode, just reverse the data so time moves from left to right.
-	@SortedData = reverse @Data;
+	@SortedData =  @Data;
+	# @SortedData = @Data;
 } else {
-	@SortedData = sort @Data;
+@SortedData = reverse @Data
+	# @SortedData = sort @Data;
 }
+
+
+# print STDERR join("\n ", @Data), "\n";
 
 # process and merge frames
 foreach (@SortedData) {
@@ -676,6 +837,8 @@ foreach (@SortedData) {
 	# eg: func_a;func_b;func_c 31
 	my ($stack, $samples) = (/^(.*)\s+?(\d+(?:\.\d*)?)$/);
 	unless (defined $samples and defined $stack) {
+		print STDERR "Ignored line: $_\n"; # Print the ignored line
+		
 		++$ignored;
 		next;
 	}
@@ -708,13 +871,19 @@ foreach (@SortedData) {
 	}
 
 	# merge frames and populate %Node:
+	# print STDERR join(" ",$last);
 	$last = flow($last, [ '', split ";", $stack ], $time, $delta);
 
 	if (defined $samples2) {
 		$time += $samples2;
 	} else {
+		# $time += 1;
 		$time += $samples;
 	}
+	# print STDERR "$\n";
+	# print STDERR "$stack\n";
+	# print STDERR "$samples\n";
+	# print STDERR "$time\n";
 }
 flow($last, [], $time, $delta);
 
@@ -755,14 +924,15 @@ if ($minwidth =~ /%$/) {
 
 # prune blocks that are too narrow and determine max depth
 while (my ($id, $node) = each %Node) {
+
 	my ($func, $depth, $etime) = split ";", $id;
 	my $stime = $node->{stime};
 	die "missing start for $id" if not defined $stime;
 
-	if (($etime-$stime) < $minwidth_time) {
-		delete $Node{$id};
-		next;
-	}
+	# if (($etime-$stime) < $minwidth_time) {
+	# 	delete $Node{$id};
+	# 	next;
+	# }
 	$depthmax = $depth if $depth > $depthmax;
 }
 
@@ -1117,7 +1287,6 @@ my $inc = <<INC;
 	}
 	function search(term) {
 		if (term) currentSearchTerm = term;
-		if (currentSearchTerm === null) return;
 
 		var re = new RegExp(currentSearchTerm, ignorecase ? 'i' : '');
 		var el = document.getElementById("frames").children;
@@ -1240,23 +1409,25 @@ while (my ($id, $node) = each %Node) {
 
 	my $info;
 	if ($func eq "" and $depth == 0) {
-		$info = "all ($samples_txt $countname, 100%)";
+		$info = "all (100%)";
 	} else {
 		my $pct = sprintf "%.2f", ((100 * $samples) / ($timemax * $factor));
 		my $escaped_func = $func;
+		# my $escaped_func = "bla"
 		# clean up SVG breaking characters:
 		$escaped_func =~ s/&/&amp;/g;
 		$escaped_func =~ s/</&lt;/g;
 		$escaped_func =~ s/>/&gt;/g;
 		$escaped_func =~ s/"/&quot;/g;
+		$escaped_func =~ s/_\[h(10|[1-9])]$//; # Handles h1 to h10.
 		$escaped_func =~ s/_\[[kwij]\]$//;	# strip any annotation
 		unless (defined $delta) {
-			$info = "$escaped_func ($samples_txt $countname, $pct%)";
+			$info = "$escaped_func";
 		} else {
 			my $d = $negate ? -$delta : $delta;
 			my $deltapct = sprintf "%.2f", ((100 * $d) / ($timemax * $factor));
 			$deltapct = $d > 0 ? "+$deltapct" : $deltapct;
-			$info = "$escaped_func ($samples_txt $countname, $pct%; $deltapct%)";
+			$info = "$escaped_func";
 		}
 	}
 
@@ -1281,6 +1452,7 @@ while (my ($id, $node) = each %Node) {
 	my $chars = int( ($x2 - $x1) / ($fontsize * $fontwidth));
 	my $text = "";
 	if ($chars >= 3) { # room for one char plus two dots
+		$func =~ s/_\[h(10|[1-9])]$//; # Handles h1 to h10.
 		$func =~ s/_\[[kwij]\]$//;	# strip any annotation
 		$text = substr $func, 0, $chars;
 		substr($text, -2, 2) = ".." if $chars < length $func;
